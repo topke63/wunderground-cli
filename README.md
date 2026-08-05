@@ -1,5 +1,7 @@
 # wunderground-cli
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+
 A Linux CLI port of [k-donn/plasmoid-wunderground](https://github.com/k-donn/plasmoid-wunderground),
 the KDE Plasma widget for Weather Underground personal weather stations (PWS).
 
