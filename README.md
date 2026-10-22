@@ -16,6 +16,9 @@ pipx install -e .
 
 This installs the `wu` command globally (editable, so code changes apply without reinstalling).
 
+To build an Arch package instead, see `packaging/aur/PKGBUILD`
+(`cd packaging/aur && makepkg -si` once a `v0.2.0` tag exists).
+
 ## Usage
 
 ```bash
@@ -59,6 +62,9 @@ wu current --json | jq .obs.temp
 Pressure is shown as absolute (station) pressure, derived from the sea-level value
 the API returns and the station elevation; the original is `pressureSeaLevel` in `--json`.
 
+Responses are cached for 2 minutes in `~/.cache/wunderground-cli`; use `--no-cache`
+(or `WU_NO_CACHE=1`) to bypass and `wu cache-clear` to empty it.
+
 Units: `metric` (default), `imperial`, or `hybrid` (UK-style: Celsius + mph).
 
 Current conditions and the 7-day forecast both include sunrise/sunset and moon
@@ -81,6 +87,7 @@ pytest
 ```
 src/wunderground_cli/
   api.py       # HTTP client for the weather proxy
+  cache.py     # short-lived on-disk response cache
   config.py    # local JSON config (default station, units)
   display.py   # rich terminal rendering
   cli.py       # Typer commands (`wu ...`)

@@ -8,13 +8,27 @@ from typing import Any, Callable, NoReturn
 
 import typer
 
-from wunderground_cli import api, config, display
+from wunderground_cli import api, cache, config, display
 
 app = typer.Typer(help="Weather Underground PWS conditions and forecasts, from the terminal.")
 station_app = typer.Typer(help="Find and manage PWS stations.")
 config_app = typer.Typer(help="View and edit local CLI config.")
 app.add_typer(station_app, name="station")
 app.add_typer(config_app, name="config")
+
+@app.callback()
+def main(
+    no_cache: bool = typer.Option(False, "--no-cache", help="Bypass the 2-minute response cache."),
+):
+    if no_cache:
+        cache.enabled = False
+
+
+@app.command("cache-clear")
+def cache_clear():
+    """Delete cached API responses."""
+    display.console.print(f"Removed {cache.clear()} cached response(s).")
+
 
 StationOpt = typer.Option(None, "--station", "-s", help="Station id (overrides config).")
 UnitsOpt = typer.Option(None, "--units", "-u", help="metric | imperial | hybrid")

@@ -15,6 +15,8 @@ from typing import Any, Literal
 
 import httpx
 
+from wunderground_cli import cache
+
 Units = Literal["metric", "imperial", "hybrid"]
 
 _HOST_SHARDS = ["aaa", "a91", "0a3", "75b", "fd6"]
@@ -57,7 +59,10 @@ def _fetch(url: str, params: dict[str, Any] | None = None) -> httpx.Response:
 
 
 def _get(path: str, params: dict[str, Any]) -> Any:
-    """GET from the proxy, retrying on another shard after network errors and 5xx."""
+    """GET from the proxy (cached briefly), retrying on another shard after network errors and 5xx."""
+    cached = cache.get(path, params)
+    if cached is not None:
+        return cached
     tried: set[str] = set()
     error: WundergroundAPIError | None = None
     for _ in range(_ATTEMPTS):
@@ -80,9 +85,11 @@ def _get(path: str, params: dict[str, Any]) -> Any:
         if not resp.content:
             return None
         try:
-            return resp.json()
+            data = resp.json()
         except ValueError as exc:
             raise WundergroundAPIError(f"Could not parse response from {path}: {exc}") from exc
+        cache.put(path, params, data)
+        return data
     assert error is not None
     raise error
 
