@@ -1,0 +1,29 @@
+# Maintainer: topke <topke63@gmail.com>
+pkgname=wunderground-cli
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Linux CLI for Weather Underground PWS conditions and forecasts"
+arch=('any')
+url="https://github.com/topke63/wunderground-cli"
+license=('GPL-3.0-or-later')
+depends=('python' 'python-typer' 'python-httpx' 'python-rich')
+makedepends=('python-build' 'python-installer' 'python-hatchling')
+checkdepends=('python-pytest')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP') # run `updpkgsums` once the v$pkgver tag exists
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+check() {
+  cd "$pkgname-$pkgver"
+  pytest
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
