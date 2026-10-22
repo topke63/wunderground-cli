@@ -140,6 +140,7 @@ def print_hourly(hours: list[dict[str, Any]], units: str) -> None:
     table.add_column("Precip %")
     table.add_column("Wind")
     table.add_column("Humidity")
+    table.add_column(f"Abs. pressure ({labels['pressure']})")
 
     for hour in hours:
         table.add_row(
@@ -150,6 +151,7 @@ def print_hourly(hours: list[dict[str, Any]], units: str) -> None:
             str(hour.get("precipChance", "-")),
             f"{hour.get('windSpeed', '-')} {labels['wind']} {hour.get('windDir', '')}".strip(),
             f"{hour.get('humidity', '-')}%",
+            str(hour.get("pressure") if hour.get("pressure") is not None else "-"),
         )
     console.print(table)
 

@@ -181,9 +181,15 @@ def hourly(
 ):
     """Show the hourly forecast for a station's area."""
     ctx = _context(station, units)
-    _, lat, lon = _located(ctx)
+    obs, lat, lon = _located(ctx)
     data = _call(
-        api.get_forecast_hourly, lat, lon, units=ctx.units, language=ctx.cfg.language, hours=hours
+        api.get_forecast_hourly,
+        lat,
+        lon,
+        units=ctx.units,
+        language=ctx.cfg.language,
+        hours=hours,
+        elevation=obs.get("elevation"),
     )
     if as_json:
         return _emit_json(data)

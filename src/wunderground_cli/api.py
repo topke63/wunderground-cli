@@ -293,8 +293,13 @@ def get_forecast_hourly(
     units: Units = "metric",
     language: str = "en-US",
     hours: int = 24,
+    elevation: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch the hourly forecast (up to 48h ahead, default trimmed to 24h)."""
+    """Fetch the hourly forecast (up to 48h ahead, default trimmed to 24h).
+
+    The forecast pressure is sea-level; pass the station `elevation` (metres for
+    metric, feet otherwise, as reported by the observation) to get absolute pressure.
+    """
     res = _get(
         "/v3/wx/forecast/hourly/2day",
         {
@@ -324,7 +329,7 @@ def get_forecast_hourly(
                 "humidity": _at(res, "relativeHumidity", i),
                 "windSpeed": _at(res, "windSpeed", i),
                 "windDir": _at(res, "windDirectionCardinal", i),
-                "pressure": _at(res, "pressureMeanSeaLevel", i),
+                "pressure": _absolute_pressure(_at(res, "pressureMeanSeaLevel", i), elevation, units),
                 "uvIndex": _at(res, "uvIndex", i),
                 "cloudCover": _at(res, "cloudCover", i),
             }
@@ -388,7 +393,9 @@ def get_dashboard(
         jobs = {
             "extended": lambda: get_extended_conditions(latitude, longitude, units, language),
             "daily": lambda: get_forecast_daily(latitude, longitude, units, language),
-            "hourly": lambda: get_forecast_hourly(latitude, longitude, units, language, hours=6),
+            "hourly": lambda: get_forecast_hourly(
+                latitude, longitude, units, language, hours=6, elevation=obs.get("elevation")
+            ),
         }
         with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
             futures = {name: pool.submit(job) for name, job in jobs.items()}

@@ -99,3 +99,10 @@ def test_config_ignores_unknown_keys(tmp_path, monkeypatch):
     f.write_text('{"units": "imperial", "junk": 1}')
     monkeypatch.setattr(config, "CONFIG_FILE", f)
     assert config.load().units == "imperial"
+
+
+def test_hourly_pressure_is_absolute_when_elevation_given(monkeypatch):
+    res = {"validTimeLocal": ["t0"], "pressureMeanSeaLevel": [1023.0]}
+    monkeypatch.setattr(api, "_get", lambda path, params: res)
+    assert api.get_forecast_hourly(0, 0, elevation=76.2)[0]["pressure"] == pytest.approx(1013.8, abs=0.1)
+    assert api.get_forecast_hourly(0, 0)[0]["pressure"] == 1023.0
