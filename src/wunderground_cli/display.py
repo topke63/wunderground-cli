@@ -77,7 +77,7 @@ def print_current(
     lines += [
         f"Humidity: {obs.get('humidity')}%",
         f"Wind: {obs.get('windSpeed')} {labels['wind']} (gusts {obs.get('windGust')} {labels['wind']})",
-        f"Pressure: {obs.get('pressure')} {labels['pressure']}",
+        f"Abs. pressure: {obs.get('pressure')} {labels['pressure']}",
         f"Precip rate/total: {obs.get('precipRate')}/{obs.get('precipTotal')} {labels['precip']}",
         f"Dew point: {obs.get('dewpt')}°{labels['temp']}",
         f"UV index: {obs.get('uv')}",

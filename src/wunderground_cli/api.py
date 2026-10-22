@@ -62,6 +62,20 @@ def _get(path: str, params: dict[str, Any]) -> Any:
         raise WundergroundAPIError(f"Could not parse response from {path}: {exc}")
 
 
+def _absolute_pressure(sea_level: float | None, elevation: float | None, units: Units) -> float | None:
+    """Convert the station's sea-level-adjusted pressure to absolute (station) pressure.
+
+    The API only reports the sea-level value; undo the adjustment with the
+    standard-atmosphere formula using the station elevation (metres for
+    metric, feet otherwise).
+    """
+    if sea_level is None or elevation is None:
+        return sea_level
+    metres = elevation if units == "metric" else elevation * 0.3048
+    absolute = sea_level * (1 - 2.25577e-5 * metres) ** 5.25588
+    return round(absolute, 2 if units == "imperial" else 1)
+
+
 def _aq_scale(country_code: str | None) -> str:
     return _AQ_SCALE_BY_COUNTRY.get((country_code or "").upper(), "EPA")
 
@@ -145,7 +159,8 @@ def get_current_observation(station_id: str, units: Units = "metric") -> dict[st
         "windChill": section.get("windChill"),
         "windSpeed": section.get("windSpeed"),
         "windGust": section.get("windGust"),
-        "pressure": section.get("pressure"),
+        "pressure": _absolute_pressure(section.get("pressure"), section.get("elev"), units),
+        "pressureSeaLevel": section.get("pressure"),
         "precipRate": section.get("precipRate"),
         "precipTotal": section.get("precipTotal"),
         "elevation": section.get("elev"),
