@@ -209,6 +209,53 @@ def print_dashboard(dashboard: dict[str, Any], units: str) -> None:
         print_hourly(dashboard["hourly"], units)
     if dashboard.get("daily"):
         print_forecast(dashboard["daily"], units)
+    for message in dashboard.get("errors") or []:
+        console.print(f"[yellow]Warning:[/yellow] could not load {message}")
+
+
+def print_air_quality(aq: dict[str, Any]) -> None:
+    console.print(
+        f"[bold]Air quality index: {aq.get('aqi')}[/bold] ({aq.get('description')}), "
+        f"primary pollutant: {aq.get('primaryPollutant') or '-'}"
+    )
+    table = Table(title="Pollutants")
+    table.add_column("Pollutant")
+    table.add_column("Amount")
+    table.add_column("Index")
+    table.add_column("Category")
+    for p in aq.get("pollutants") or []:
+        table.add_row(
+            str(p.get("phrase") or p.get("name")),
+            f"{p.get('amount')} {p.get('unit') or ''}".strip(),
+            str(p.get("index", "-")),
+            str(p.get("category") or "-"),
+        )
+    console.print(table)
+
+
+def _kp_style(kp: float) -> str:
+    if kp >= 5:
+        return "bold red"
+    if kp >= 4:
+        return "yellow"
+    return "green"
+
+
+def print_aurora(data: dict[str, Any]) -> None:
+    current = data.get("current")
+    if current:
+        kp = current["kp"]
+        console.print(
+            f"Current Kp: [{_kp_style(kp)}]{kp:g}[/{_kp_style(kp)}] "
+            f"({current['kind']}, {_fmt_time(current['time'], '%a %H:%M')} UTC)"
+        )
+    table = Table(title="Kp Forecast (3-hourly, UTC)")
+    table.add_column("Time")
+    table.add_column("Kp")
+    for e in data.get("forecast") or []:
+        table.add_row(_fmt_time(e["time"], "%a %H:%M"), f"[{_kp_style(e['kp'])}]{e['kp']:g}[/]")
+    console.print(table)
+    console.print("[dim]Kp 5+ is a geomagnetic storm; aurora can reach mid-latitudes at Kp 6-7+.[/dim]")
 
 
 def print_error(message: str) -> None:

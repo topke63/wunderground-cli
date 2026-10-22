@@ -41,12 +41,23 @@ wu hourly --hours 12
 wu rain
 wu rain --hours 12
 
+# Air quality (per-pollutant) and NOAA Kp / aurora activity
+wu air
+wu aurora
+
 # One-screen overview: current conditions, sun/moon, next hours, 7-day outlook
 wu dashboard
 
-# Inspect local config (~/.config/wunderground-cli/config.json)
+# Inspect / change local config (~/.config/wunderground-cli/config.json)
 wu config show
+wu config set --units imperial --language de-DE
+
+# Any data command accepts --json for scripting
+wu current --json | jq .obs.temp
 ```
+
+Pressure is shown as absolute (station) pressure, derived from the sea-level value
+the API returns and the station elevation; the original is `pressureSeaLevel` in `--json`.
 
 Units: `metric` (default), `imperial`, or `hybrid` (UK-style: Celsius + mph).
 
@@ -55,9 +66,15 @@ phase (with rise/set times).
 
 ## Status
 
-Core commands (station search/near/set, current, forecast, hourly, rain, dashboard)
-work end-to-end. Not yet ported from the original plasmoid: air quality detail
-view and the NOAA Kp-index (aurora) panel.
+All commands from the plasmoid are ported, including air quality and the NOAA Kp-index
+(aurora) panel. Requests retry on another proxy shard after network errors and 5xx.
+
+## Development
+
+```bash
+pip install -e '.[test]'
+pytest
+```
 
 ## Project layout
 
@@ -67,4 +84,5 @@ src/wunderground_cli/
   config.py    # local JSON config (default station, units)
   display.py   # rich terminal rendering
   cli.py       # Typer commands (`wu ...`)
+tests/         # pytest suite (mocked HTTP)
 ```

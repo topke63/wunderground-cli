@@ -20,11 +20,25 @@ class Config:
     language: str = "en-US"
 
 
+VALID_UNITS = ("metric", "imperial", "hybrid")
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
 def load() -> Config:
+    """Load the config; a missing file gives defaults, a corrupt one raises ConfigError."""
     if not CONFIG_FILE.exists():
         return Config()
-    data = json.loads(CONFIG_FILE.read_text())
-    return Config(**{**asdict(Config()), **data})
+    try:
+        data = json.loads(CONFIG_FILE.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object")
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"Could not read {CONFIG_FILE}: {exc}. Fix or delete the file.") from exc
+    known = asdict(Config())
+    return Config(**{**known, **{k: v for k, v in data.items() if k in known}})
 
 
 def save(config: Config) -> None:

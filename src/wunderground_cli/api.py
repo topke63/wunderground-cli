@@ -9,6 +9,7 @@ proxy, so no API key is required here either.
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -37,29 +38,53 @@ class WundergroundAPIError(RuntimeError):
         self.status = status
 
 
-def _api_host() -> str:
-    shard = random.choice(_HOST_SHARDS)
-    return f"https://wps.mitchell-{shard}.workers.dev"
+_KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json"
+_ATTEMPTS = 3
+
+_client = httpx.Client(timeout=10.0)
 
 
-def _get(path: str, params: dict[str, Any]) -> Any:
-    url = f"{_api_host()}{path}"
+def _api_host(exclude: set[str] | None = None) -> str:
+    shards = [sh for sh in _HOST_SHARDS if sh not in (exclude or set())] or _HOST_SHARDS
+    return f"https://wps.mitchell-{random.choice(shards)}.workers.dev"
+
+
+def _fetch(url: str, params: dict[str, Any] | None = None) -> httpx.Response:
     try:
-        resp = httpx.get(url, params=params, timeout=10.0)
+        return _client.get(url, params=params)
     except httpx.HTTPError as exc:
         raise WundergroundAPIError(f"Network error contacting {url}: {exc}") from exc
 
-    if resp.status_code != 200:
-        raise WundergroundAPIError(
-            f"Request to {path} failed: HTTP {resp.status_code}", resp.status_code
-        )
 
-    if not resp.content:
-        return None
-    try:
-        return resp.json()
-    except ValueError as exc:
-        raise WundergroundAPIError(f"Could not parse response from {path}: {exc}")
+def _get(path: str, params: dict[str, Any]) -> Any:
+    """GET from the proxy, retrying on another shard after network errors and 5xx."""
+    tried: set[str] = set()
+    error: WundergroundAPIError | None = None
+    for _ in range(_ATTEMPTS):
+        host = _api_host(tried)
+        tried.add(host.split("mitchell-")[1].split(".")[0])
+        try:
+            resp = _fetch(f"{host}{path}", params)
+        except WundergroundAPIError as exc:
+            error = exc
+            continue
+        if resp.status_code >= 500:
+            error = WundergroundAPIError(
+                f"Request to {path} failed: HTTP {resp.status_code}", resp.status_code
+            )
+            continue
+        if resp.status_code != 200:
+            raise WundergroundAPIError(
+                f"Request to {path} failed: HTTP {resp.status_code}", resp.status_code
+            )
+        if not resp.content:
+            return None
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise WundergroundAPIError(f"Could not parse response from {path}: {exc}") from exc
+    assert error is not None
+    raise error
 
 
 def _absolute_pressure(sea_level: float | None, elevation: float | None, units: Units) -> float | None:
@@ -88,23 +113,27 @@ class Station:
     longitude: float
 
 
+def _stations(res: Any, id_key: str, name_key: str) -> list[Station]:
+    loc = (res or {}).get("location") or {}
+    ids = loc.get(id_key) or []
+    return [
+        Station(
+            station_id=ids[i],
+            address=_at(loc, name_key, i) or "",
+            latitude=_at(loc, "latitude", i) or 0.0,
+            longitude=_at(loc, "longitude", i) or 0.0,
+        )
+        for i in range(len(ids))
+    ]
+
+
 def search_stations(query: str, language: str = "en-US") -> list[Station]:
     """Search nearby PWS stations by free text (city, address, station id...)."""
     res = _get(
         "/v3/location/search",
         {"query": query, "locationType": "pws", "language": language, "format": "json"},
     )
-    loc = (res or {}).get("location") or {}
-    ids = loc.get("pwsId") or []
-    names = loc.get("neighborhood") or []
-    lats = loc.get("latitude") or []
-    lons = loc.get("longitude") or []
-    return [
-        Station(station_id=ids[i], address=names[i] if i < len(names) else "",
-                latitude=lats[i] if i < len(lats) else 0.0,
-                longitude=lons[i] if i < len(lons) else 0.0)
-        for i in range(len(ids))
-    ]
+    return _stations(res, "pwsId", "neighborhood")
 
 
 def search_geocode(latitude: float, longitude: float) -> list[Station]:
@@ -113,17 +142,7 @@ def search_geocode(latitude: float, longitude: float) -> list[Station]:
         "/v3/location/near",
         {"geocode": f"{latitude},{longitude}", "product": "pws", "format": "json"},
     )
-    loc = (res or {}).get("location") or {}
-    ids = loc.get("stationId") or []
-    names = loc.get("stationName") or []
-    lats = loc.get("latitude") or []
-    lons = loc.get("longitude") or []
-    return [
-        Station(station_id=ids[i], address=names[i] if i < len(names) else "",
-                latitude=lats[i] if i < len(lats) else 0.0,
-                longitude=lons[i] if i < len(lons) else 0.0)
-        for i in range(len(ids))
-    ]
+    return _stations(res, "stationId", "stationName")
 
 
 def get_current_observation(station_id: str, units: Units = "metric") -> dict[str, Any]:
@@ -205,6 +224,7 @@ def get_extended_conditions(
             "description": aq.get("airQualityCategory"),
             "primaryPollutant": primary,
             "primaryPollutantDetail": details,
+            "pollutants": list((aq.get("pollutants") or {}).values()),
         }
 
     return {
@@ -242,36 +262,29 @@ def get_forecast_daily(
         night_idx = i * 2 + 1
         forecast.append(
             {
-                "date": (res.get("validTimeLocal") or [None] * len(days))[i],
+                "date": _at(res, "validTimeLocal", i),
                 "dayOfWeek": days[i],
-                "high": (res.get("calendarDayTemperatureMax") or [None] * len(days))[i],
-                "low": (res.get("calendarDayTemperatureMin") or [None] * len(days))[i],
-                "narrative": (res.get("narrative") or [""] * len(days))[i],
-                "dayDesc": _daypart_field(daypart, "wxPhraseLong", day_idx),
-                "nightDesc": _daypart_field(daypart, "wxPhraseLong", night_idx),
-                "precipChanceDay": _daypart_field(daypart, "precipChance", day_idx),
-                "precipChanceNight": _daypart_field(daypart, "precipChance", night_idx),
-                "precipType": _daypart_field(daypart, "precipType", day_idx)
-                or _daypart_field(daypart, "precipType", night_idx),
-                "totalPrecip": (res.get("qpf") or [None] * len(days))[i],
-                "totalSnow": (res.get("qpfSnow") or [None] * len(days))[i],
-                "iconCode": _daypart_field(daypart, "iconCode", day_idx),
-                "sunrise": (res.get("sunriseTimeLocal") or [None] * len(days))[i],
-                "sunset": (res.get("sunsetTimeLocal") or [None] * len(days))[i],
-                "moonrise": (res.get("moonriseTimeLocal") or [None] * len(days))[i],
-                "moonset": (res.get("moonsetTimeLocal") or [None] * len(days))[i],
-                "moonPhase": (res.get("moonPhase") or [None] * len(days))[i],
-                "moonPhaseCode": (res.get("moonPhaseCode") or [None] * len(days))[i],
+                "high": _at(res, "calendarDayTemperatureMax", i),
+                "low": _at(res, "calendarDayTemperatureMin", i),
+                "narrative": _at(res, "narrative", i),
+                "dayDesc": _at(daypart, "wxPhraseLong", day_idx),
+                "nightDesc": _at(daypart, "wxPhraseLong", night_idx),
+                "precipChanceDay": _at(daypart, "precipChance", day_idx),
+                "precipChanceNight": _at(daypart, "precipChance", night_idx),
+                "precipType": _at(daypart, "precipType", day_idx)
+                or _at(daypart, "precipType", night_idx),
+                "totalPrecip": _at(res, "qpf", i),
+                "totalSnow": _at(res, "qpfSnow", i),
+                "iconCode": _at(daypart, "iconCode", day_idx),
+                "sunrise": _at(res, "sunriseTimeLocal", i),
+                "sunset": _at(res, "sunsetTimeLocal", i),
+                "moonrise": _at(res, "moonriseTimeLocal", i),
+                "moonset": _at(res, "moonsetTimeLocal", i),
+                "moonPhase": _at(res, "moonPhase", i),
+                "moonPhaseCode": _at(res, "moonPhaseCode", i),
             }
         )
     return forecast
-
-
-def _daypart_field(daypart: dict[str, Any], field: str, index: int) -> Any:
-    values = daypart.get(field)
-    if not values or index >= len(values):
-        return None
-    return values[index]
 
 
 def get_forecast_hourly(
@@ -332,24 +345,62 @@ def get_rain_forecast(
     return {"hourly": hourly, "daily": daily}
 
 
+def get_aurora() -> dict[str, Any]:
+    """NOAA SWPC planetary Kp index: latest observation plus the 3-hourly forecast."""
+    resp = _fetch(_KP_URL)
+    if resp.status_code != 200:
+        raise WundergroundAPIError(f"NOAA Kp request failed: HTTP {resp.status_code}", resp.status_code)
+    try:
+        rows = resp.json()
+    except ValueError as exc:
+        raise WundergroundAPIError(f"Could not parse NOAA Kp response: {exc}") from exc
+
+    entries = [
+        {"time": r.get("time_tag"), "kp": float(r["kp"]), "kind": r.get("observed")}
+        for r in rows
+        if isinstance(r, dict) and r.get("kp") is not None
+    ]
+    past = [e for e in entries if e["kind"] in ("observed", "estimated")]
+    return {
+        "current": past[-1] if past else None,
+        "forecast": [e for e in entries if e["kind"] == "predicted"][:16],
+    }
+
+
 def get_dashboard(
     station_id: str, units: Units = "metric", language: str = "en-US"
 ) -> dict[str, Any]:
     """Everything needed for a one-screen overview: current conditions, extended
-    conditions/alerts/AQ, today's sun & moon details, next 6h, and the 7-day outlook."""
+    conditions/alerts/AQ, today's sun & moon details, next 6h, and the 7-day outlook.
+
+    The observation is required; the other sections are fetched in parallel and
+    degrade to empty with a message in `errors` if they fail.
+    """
     obs = get_current_observation(station_id, units=units)
     latitude, longitude = obs.get("latitude"), obs.get("longitude")
 
-    extended = None
-    if latitude and longitude:
-        extended = get_extended_conditions(latitude, longitude, units=units, language=language)
+    extended: dict[str, Any] | None = None
+    daily: list[dict[str, Any]] = []
+    hourly: list[dict[str, Any]] = []
+    errors: list[str] = []
 
-    daily = get_forecast_daily(latitude, longitude, units=units, language=language) if latitude and longitude else []
-    hourly = (
-        get_forecast_hourly(latitude, longitude, units=units, language=language, hours=6)
-        if latitude and longitude
-        else []
-    )
+    if latitude is not None and longitude is not None:
+        jobs = {
+            "extended": lambda: get_extended_conditions(latitude, longitude, units, language),
+            "daily": lambda: get_forecast_daily(latitude, longitude, units, language),
+            "hourly": lambda: get_forecast_hourly(latitude, longitude, units, language, hours=6),
+        }
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            futures = {name: pool.submit(job) for name, job in jobs.items()}
+        results: dict[str, Any] = {}
+        for name, future in futures.items():
+            try:
+                results[name] = future.result()
+            except WundergroundAPIError as exc:
+                errors.append(f"{name}: {exc}")
+        extended = results.get("extended")
+        daily = results.get("daily") or []
+        hourly = results.get("hourly") or []
 
     return {
         "obs": obs,
@@ -357,10 +408,12 @@ def get_dashboard(
         "today": daily[0] if daily else None,
         "hourly": hourly,
         "daily": daily,
+        "errors": errors,
     }
 
 
 def _at(res: dict[str, Any], field: str, index: int) -> Any:
+    """Element `index` of a parallel-array field, or None if missing/short."""
     values = res.get(field)
     if not values or index >= len(values):
         return None
